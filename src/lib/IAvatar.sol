@@ -3,7 +3,7 @@
 /// @title Zodiac Avatar - A contract that manages modules that can execute transactions via this contract.
 pragma solidity >=0.7.0 <0.9.0;
 
-import "./Enum.sol";
+import "safe-contracts/common/Enum.sol";
 
 interface IAvatar {
     event EnabledModule(address module);

@@ -11,7 +11,10 @@ contract SafeNFT is ERC721, ReentrancyGuard {
     address public constant PLACEHOLDER_OWNER = address(0x2);
 
     mapping(uint256 => address) public tokenToAvatar;
-    mapping(address => uint256) public avatarToSafe; 
+    mapping(address => uint256) public avatarToToken; 
+
+    event Minted(address indexed avatar, uint256 indexed tokenId);
+    event Burned(address indexed avatar, uint256 indexed tokenId);
 
     uint256 counter;
 
@@ -28,19 +31,20 @@ contract SafeNFT is ERC721, ReentrancyGuard {
         );
     }
 
-    function mint(address receiver) external nonReentrant {
+    function mint(address receiver) external nonReentrant returns(uint256) {
         uint256 tokenId = ++counter;
         tokenToAvatar[tokenId] = msg.sender;
-        avatarToSafe[msg.sender] = tokenId;
+        avatarToToken[msg.sender] = tokenId;
         IAvatar avatar = IAvatar(msg.sender);
         
         // Cannot be already tokenised because the avatar itself needs to send the tx
 
         // Wipe all modules except this one
-        (address[] memory modules, ) = avatar.getModulesPaginated(address(0x1), type(uint256).max);
+        (address[] memory modules, address next) = avatar.getModulesPaginated(address(0x1), 20);
+        require(next == address(0x1), "Too many modules");
 
         // remove back to start
-        for(uint256 i = modules.length - 1; i >= 0; i++) {
+        for(uint256 i = modules.length - 1; i > 0; i--) {
             address module = modules[i];
 
             // Skip if this contract
@@ -52,7 +56,8 @@ contract SafeNFT is ERC721, ReentrancyGuard {
 
             // avatar.disableModule(prevModule, module);
             bytes memory data = abi.encodeWithSelector(IAvatar.disableModule.selector, prevModule, module);
-            avatar.execTransactionFromModule(msg.sender, 0, data, Enum.Operation.Call);
+            bool success = avatar.execTransactionFromModule(msg.sender, 0, data, Enum.Operation.Call);
+            require(success, "Failed to disable module");
         }
 
 
@@ -64,20 +69,23 @@ contract SafeNFT is ERC721, ReentrancyGuard {
             address prevOwner = owners[i-1];
 
             // avatar.removeOwner(prevOwner, owner, 0);
-            bytes memory data = abi.encodeWithSelector(IAvatar.removeOwner.selector, prevOwner, owner, 0);
-            avatar.execTransactionFromModule(msg.sender, 0, data, Enum.Operation.Call);
+            bytes memory data = abi.encodeWithSelector(IAvatar.removeOwner.selector, prevOwner, owner, 1);
+            bool success = avatar.execTransactionFromModule(msg.sender, 0, data, Enum.Operation.Call);
+            require(success, "Failed to remove owner");
         }
 
         {
             // replace first owner
             // avatar.swapOwner(address(0x1), owners[0], PLACEHOLDER_OWNER)
             bytes memory data = abi.encodeWithSelector(IAvatar.swapOwner.selector, address(0x1), owners[0], PLACEHOLDER_OWNER);
-            avatar.execTransactionFromModule(msg.sender, 0, data, Enum.Operation.Call);
+            bool success = avatar.execTransactionFromModule(msg.sender, 0, data, Enum.Operation.Call);
+            require(success, "Failed to swap owner");
         }
     
 
         // Mint NFT
         _mint(receiver, tokenId);
+        emit Minted(msg.sender, tokenId);
     }
 
     function burn(uint256 id, address[] calldata owners, uint256 threshold) external nonReentrant {
@@ -87,6 +95,7 @@ contract SafeNFT is ERC721, ReentrancyGuard {
         _burn(id);
         // reset mapping
         tokenToAvatar[id] = address(0);
+        avatarToToken[address(avatar)] = 0;
 
         // Set owners
         // replace first owner
@@ -110,6 +119,7 @@ contract SafeNFT is ERC721, ReentrancyGuard {
             avatar.execTransactionFromModule(address(avatar), 0 , data, Enum.Operation.Call);
         }
 
+        emit Burned(address(avatar), id);
     }
 
     function tokenURI(uint256 id) public view override returns (string memory) {
